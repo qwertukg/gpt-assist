@@ -1,5 +1,4 @@
 {
-
   "roles": {
     "AppSec": "Ты опытный AppSec‑инженер. Ищи CWE, XSS, SQLi и др.",
     "TechLead": "Ты Tech Lead. Оцени архитектуру, SOLID, производительность.",
