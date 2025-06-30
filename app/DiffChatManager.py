@@ -108,6 +108,7 @@ class DiffChatManager:
         tid = f"thr_{int(time.time() * 1000)}"
         self.threads[tid] = {
             "prev": "",
+            "resp_id": "",
             "meta": {
                 "role": role,
                 "feature": feature,
@@ -131,38 +132,39 @@ class DiffChatManager:
             raise ValueError(f"Unknown thread_id {thread_id}")
 
         thread = self.threads[thread_id]
-        prev_id = thread["prev"] or None  # '' → None
-
         meta = thread["meta"]
-        meta_txt = ", ".join(
-            f"{k}={v}" for k, v in meta.items()
-        )
-
         role = meta["role"]
         feature = meta["feature"]
         versions = meta["versions"]
-        existing_feature = self.get_thread_id_by_feature(role, feature)
+        last_response_id = self.threads[thread_id]["resp_id"] or None
 
         response = self.client.responses.create(
             model="gpt-4o-mini",
             instructions=f"""{self.roles[role]}
             
-            Контекст: перед тобой изменения по фиче {feature}, с версиями {meta.get("versions")}.
+            Контекст: перед тобой изменения по фиче {feature}, с версиями {versions}.
             Это история последовательных изменений. Используй её, чтобы учитывать развитие кода и понимать текущую стадию.
             """,
             input=content,
-            previous_response_id=prev_id,
+            previous_response_id=last_response_id,
             tools=[{
                 "type": "file_search",
                 "vector_store_ids": [self.vector_store_id],
             }],
         )
 
+        print(f"resp_id: {last_response_id}")
+        print(f"response.id: {response.id}")
+        print(f"content: {content}")
 
-        # --- сохраняем prev, ТОЛЬКО если фича уже была
-        if existing_feature is not None:
-            thread["prev"] = response.id
-
+        self.threads[thread_id]["resp_id"] = response.id
         self._dump_state()
 
         return response.output_text
+
+
+    def clear_file_storage(self):
+        files = self.client.files.list().data
+        for f in files:
+            print(f"Удаляю файл {f.id} ({f.filename})")
+            self.client.files.delete(file_id=f.id)

@@ -9,7 +9,7 @@ if __name__ == '__main__':
     result = manager.send_message(
         role,
         thread_id,
-        "Что делает код этой фичи?"
+        "Как изменилась эта Фича по сравнению c предыдущей версией?"
     )
     print(result)
 
