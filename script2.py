@@ -2,11 +2,12 @@ from app.DiffChatManager import DiffChatManager
 
 if __name__ == '__main__':
     manager = DiffChatManager()
-    sha = "feature_v2"
-    manager.upload_diff_version(sha + ".txt")
-    thread_id = manager.create_thread({"commit": "sha_" + sha, "feature": "BASEL-1"})
+    role = "TechLead"
+    feature = "BASEL-1"
+    manager.upload_diff_version("v2.txt")
+    thread_id = manager.create_thread(role, feature, "2")
     result = manager.send_message(
-        "TechLead",
+        role,
         thread_id,
         "Как изменилась эта Фича?"
     )

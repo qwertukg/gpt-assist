@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import time
@@ -38,28 +39,25 @@ class DiffChatManager:
         # загрузка state.json (если есть)
         if self.state_path.exists():
             with open(self.state_path, encoding="utf-8") as f:
-                self._state: Dict[str, Any] = json.load(f)
+                self.state: Dict[str, Any] = json.load(f)
         else:
-            self._state = {}
+            self.state = {}
 
         self.client = OpenAI(api_key=self.config.api_key)
 
         # Vector Store: берём из state или создаём
         self.vector_store_id = (
-            self._state.get("vector_store_id")
+            self.state.get("vector_store_id")
             or self._ensure_vector_store(self.config.vector_store_name)
         )
-        self._state["vector_store_id"] = self.vector_store_id
+        self.state["vector_store_id"] = self.vector_store_id
 
         # Роли -> prompt
         self.roles: Dict[str, str] = self.config.role_prompts
 
         # Контекст тредов: thread_id -> {"prev": str, "meta": dict}
         # при отсутствии — пустой словарь
-        self._threads: Dict[str, Dict[str, Any]] = self._state.get("threads", {})
-
-        # построим индекс feature → thread_id
-        self._rebuild_index()
+        self.threads: Dict[str, Dict[str, Any]] = copy.deepcopy(self.state.get("threads", {}))
 
         # сохраняем всё, чтобы сразу был актуальный state.json
         self._dump_state()
@@ -67,9 +65,9 @@ class DiffChatManager:
     # ------------------------- helper: persist ---------------------------
     def _dump_state(self):
         """Пишет self._state на диск."""
-        self._state["threads"] = self._threads
+        self.state["threads"] = copy.deepcopy(self.threads)
         with open(self.state_path, "w", encoding="utf-8") as f:
-            json.dump(self._state, f, ensure_ascii=False, indent=2)
+            json.dump(self.state, f, ensure_ascii=False, indent=2)
 
     # ------------------------- vector store ------------------------------
     def _ensure_vector_store(self, name: str) -> str:
@@ -88,63 +86,70 @@ class DiffChatManager:
         )
         return file_obj.id
 
-    # ------------------------ threads ------------------------
-    def _rebuild_index(self) -> None:
-        """map feature → thread_id, только для EXISTING тредов"""
-        self._index = {
-            data["meta"].get("feature"): tid
-            for tid, data in self._threads.items()
-            if data["meta"].get("feature")  # не пустой feature
-        }
 
     # 2) create_thread — один thread на одну feature;
     #    если feature отсутствует или пустой → всегда новый thread.
-    def create_thread(self, meta: Optional[Dict[str, str]] = None) -> str:
+    def create_thread(self, role: str, feature: str, version: str) -> str:
         """
         • Возвращаем существующий thread, когда feature совпадает.
         • При новом/пустом feature всегда создаётся новый thread.
         """
-        meta = meta or {}
-        feat: str = meta.get("feature") or ""  # '' если нет ключа
-        commit = meta.get("commit")
 
         # --- уже есть тред для этой фичи ---
-        if feat and feat in self._index:
-            tid = self._index[feat]
-            if commit:
-                self._threads[tid]["meta"].setdefault("commits", []).append(commit)
-                self._dump_state()
-            return tid
+        existing_feature_id = self.get_thread_id_by_feature(role, feature)
+
+        if existing_feature_id:
+            versions = self.threads[existing_feature_id]["meta"]["versions"]
+            if version not in versions:
+                versions.append(version)
+            return existing_feature_id
 
         # --- новый тред ---
         tid = f"thr_{int(time.time() * 1000)}"
-        self._threads[tid] = {
+        self.threads[tid] = {
             "prev": "",
             "meta": {
-                "feature": feat,  # может быть ''
-                "commits": [commit] if commit else []
+                "role": role,
+                "feature": feature,
+                "versions": [version],
             },
         }
-        self._rebuild_index()
-        self._dump_state()
         return tid
+
+    def get_thread_id_by_feature(self, role: str, feature: str) -> Optional[str]:
+        for thread_id, thread_data in self.state.get("threads", {}).items():
+            if thread_data.get("meta", {}).get("role") == role and thread_data["meta"]["feature"] == feature:
+                return thread_id
+        return None
+
 
     # ------------------------- chat -------------------------------------
     def send_message(self, role: str, thread_id: str, content: str) -> str:
         if role not in self.roles:
             raise ValueError(f"Unknown role: {role}")
-        if thread_id not in self._threads:
+        if thread_id not in self.threads:
             raise ValueError(f"Unknown thread_id {thread_id}")
 
-        thread = self._threads[thread_id]
+        thread = self.threads[thread_id]
         prev_id = thread["prev"] or None  # '' → None
+
+        meta = thread["meta"]
         meta_txt = ", ".join(
-            f"{k}={v}" for k, v in thread["meta"].items()
+            f"{k}={v}" for k, v in meta.items()
         )
+
+        role = meta["role"]
+        feature = meta["feature"]
+        versions = meta["versions"]
+        existing_feature = self.get_thread_id_by_feature(role, feature)
 
         response = self.client.responses.create(
             model="gpt-4o-mini",
-            instructions=f"{self.roles[role]}\n\n[meta] {meta_txt}",
+            instructions=f"""{self.roles[role]}
+            
+            Контекст: перед тобой изменения по фиче {feature}, с версиями {meta.get("versions")}.
+            Это история последовательных изменений. Используй её, чтобы учитывать развитие кода и понимать текущую стадию.
+            """,
             input=content,
             previous_response_id=prev_id,
             tools=[{
@@ -153,11 +158,11 @@ class DiffChatManager:
             }],
         )
 
-        # --- сохраняем prev, ТОЛЬКО если фича уже была (len(commits) > 1)
-        #     ИЛИ prev уже заполнен (это >2-й, >3-й … вызов) ---
-        commits = thread["meta"].get("commits", [])
-        if thread["meta"].get("feature") and (thread["prev"] or len(commits) > 1):
+
+        # --- сохраняем prev, ТОЛЬКО если фича уже была
+        if existing_feature is not None:
             thread["prev"] = response.id
-            self._dump_state()
+
+        self._dump_state()
 
         return response.output_text
