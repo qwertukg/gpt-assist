@@ -1,0 +1,31 @@
+diff --git a/src/main/java/com/example/controller/GreetingController.java b/src/main/java/com/example/controller/GreetingController.java
+new file mode 100644
+index 0000000..b4d3c72
+--- /dev/null
++++ b/src/main/java/com/example/controller/GreetingController.java
+@@ -0,0 +1,23 @@
++package com.example.controller;
++
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.RequestParam;
++import org.springframework.web.bind.annotation.RestController;
++
++@RestController
++public class GreetingController {
++
++    @GetMapping("/api/hello")
++    public String hello(@RequestParam String name, @RequestParam String age) {
++        String message = "Hello, " + name + "!";
++        return message + " Your age is: " + age;
++    }
++
++    @GetMapping("/api/bye")
++    public String bye() {
++        return "bye!";
++    }
++
++    @GetMapping("/api/bye2")
++    public String bye2() {
++        return "bye2!";
++    }
++}
