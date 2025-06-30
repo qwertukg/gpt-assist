@@ -153,9 +153,9 @@ class DiffChatManager:
             }],
         )
 
-        print(f"resp_id: {last_response_id}")
-        print(f"response.id: {response.id}")
-        print(f"content: {content}")
+        # print(f"resp_id: {last_response_id}")
+        # print(f"response.id: {response.id}")
+        # print(f"content: {content}")
 
         self.threads[thread_id]["resp_id"] = response.id
         self._dump_state()

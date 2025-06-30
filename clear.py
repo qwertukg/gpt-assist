@@ -1,4 +1,4 @@
-from app.DiffChatManager import DiffChatManager
+from DiffChatManager import DiffChatManager
 
 if __name__ == '__main__':
     manager = DiffChatManager()
